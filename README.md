@@ -1,6 +1,6 @@
-================
-= ZMM220 port =
-================
+
+# ZMM220 port
+
 this is a port of fbDOOM (with is based on the original DOOM) for the ZMM220 platform from ZKTeco
 
 
@@ -8,9 +8,9 @@ this is a port of fbDOOM (with is based on the original DOOM) for the ZMM220 pla
 
 
 
-================
-= fbDOOM =
-================
+
+# fbDOOM
+
 
 Adaptation of the original DOOM
 to be easily portable to framebuffer devices with minimal depenencies.
@@ -24,8 +24,8 @@ To build (example):
 * make CROSS_COMPILE=arm-linux-gnueabihf-
 
 
-Original readme
-===============
+# Original readme
+
 
 Here it is, at long last.  The DOOM source code is released for your
 non-profit use.  You still need real DOOM data to work with this code.
