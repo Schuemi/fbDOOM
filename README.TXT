@@ -1,4 +1,10 @@
 ================
+= ZMM220 port =
+================
+this is a port of fbDOOM (with is based on the original DOOM) for the ZMM220 platform from ZKTeco
+
+
+================
 = fbDOOM =
 ================
 
