@@ -46,6 +46,7 @@ rcsid[] = "$Id: i_unix.c,v 1.5 1997/02/03 22:45:10 b1 Exp $";
 #include <time.h>
 #include <signal.h>
 
+#include <linux/soundcard.h>
 #include "z_zone.h"
 
 #include "i_system.h"
@@ -56,6 +57,8 @@ rcsid[] = "$Id: i_unix.c,v 1.5 1997/02/03 22:45:10 b1 Exp $";
 
 #include "doomdef.h"
 
+#include "sounds.h"
+#include "d_loop.h"
 // UNIX hack, to be removed.
 #ifdef SNDSERV
 // Separate sound server process.
@@ -75,12 +78,15 @@ void I_SoundDelTimer( void );
 // None?
 #endif
 
+#define AUDIO_DEV "/dev/dsp"
 
 // A quick hack to establish a protocol between
 // synchronous mix buffer updates and asynchronous
 // audio writes. Probably redundant with gametic.
 static int flag = 0;
 
+static int snd_SfxVolume;
+static int snd_MusicVolume;
 // The number of internal mixing channels,
 //  the samples calculated for each mixing step,
 //  the size of the 16bit, 2 hardware channel (stereo)
@@ -148,7 +154,7 @@ int		vol_lookup[128*256];
 int*		channelleftvol_lookup[NUM_CHANNELS];
 int*		channelrightvol_lookup[NUM_CHANNELS];
 
-
+int snd_musicdevice = SNDDEVICE_NONE;
 
 
 //
@@ -172,7 +178,10 @@ myioctl
 }
 
 
-
+void I_PrecacheSounds(sfxinfo_t *sounds, int num_sounds)
+{
+    
+}
 
 
 //
@@ -305,6 +314,7 @@ addsfx
     // Loop all channels to find oldest SFX.
     for (i=0; (i<NUM_CHANNELS) && (channels[i]); i++)
     {
+       
 	if (channelstart[i] < oldest)
 	{
 	    oldestnum = i;
@@ -324,7 +334,7 @@ addsfx
     // Okay, in the less recent channel,
     //  we will handle the new SFX.
     // Set pointer to raw data.
-    channels[slot] = (unsigned char *) S_sfx[sfxid].data;
+    channels[slot] = (unsigned char *) S_sfx[sfxid].driver_data;
     // Set pointer to end of raw data.
     channelsend[slot] = channels[slot] + lengths[sfxid];
 
@@ -465,7 +475,7 @@ int I_GetSfxLumpNum(sfxinfo_t* sfx)
 //  is set, but currently not used by mixing.
 //
 int
-I_StartSound
+startSound
 ( int		id,
   int		vol,
   int		sep,
@@ -497,6 +507,21 @@ I_StartSound
 #endif
 }
 
+int I_StartSound(sfxinfo_t *sfxinfo, int channel, int vol, int sep) {
+    int i;
+    
+    for (i=1 ; i<NUMSFX ; i++)
+  { 
+    
+    if (! strcmp(S_sfx[i].name, sfxinfo->name))
+    {
+      return startSound(i, vol, sep, 128, sfxinfo->priority);
+    }
+  }
+  return 0;
+    
+    
+}
 
 
 void I_StopSound (int handle)
@@ -511,7 +536,7 @@ void I_StopSound (int handle)
 }
 
 
-int I_SoundIsPlaying(int handle)
+boolean I_SoundIsPlaying(int handle)
 {
     // Ouch.
     return gametic < handle;
@@ -602,7 +627,9 @@ void I_UpdateSound( void )
 		// Check whether we are done.
 		if (channels[ chan ] >= channelsend[ chan ])
 		    channels[ chan ] = 0;
+        
 	    }
+	    
 	}
 	
 	// Clamp to range. Left hardware channel.
@@ -630,7 +657,9 @@ void I_UpdateSound( void )
 	leftout += step;
 	rightout += step;
     }
-
+    
+    
+    
 #ifdef SNDINTR
     // Debug check.
     if ( flag )
@@ -648,6 +677,8 @@ void I_UpdateSound( void )
     // Increment flag for update.
     flag++;
 #endif
+    
+   write(audio_fd, mixbuffer, SAMPLECOUNT*BUFMUL);
 }
 
 
@@ -670,10 +701,7 @@ I_SubmitSound(void)
 
 void
 I_UpdateSoundParams
-( int	handle,
-  int	vol,
-  int	sep,
-  int	pitch)
+( int channel, int vol, int sep)
 {
   // I fail too see that this is used.
   // Would be using the handle to identify
@@ -681,7 +709,7 @@ I_UpdateSoundParams
   //  and resetting the channel parameters.
 
   // UNUSED.
-  handle = vol = sep = pitch = 0;
+  channel = vol = sep =  0;
 }
 
 
@@ -732,7 +760,7 @@ void I_ShutdownSound(void)
 
 
 void
-I_InitSound()
+I_InitSound(boolean use_sfx_prefix)
 { 
 #ifdef SNDSERV
   char buffer[256];
@@ -755,16 +783,19 @@ I_InitSound()
 #else
     
   int i;
-  
+  int p;
 #ifdef SNDINTR
   fprintf( stderr, "I_SoundSetTimer: %d microsecs\n", SOUND_INTERVAL );
   I_SoundSetTimer( SOUND_INTERVAL );
 #endif
     
+  for (p = 0; p < NUM_CHANNELS; p++){
+   channelstart[p] = 0;   
+  }
   // Secure and configure sound device first.
   fprintf( stderr, "I_InitSound: ");
   
-  audio_fd = open("/dev/dsp", O_WRONLY);
+  audio_fd = open(AUDIO_DEV, O_WRONLY, 0);
   if (audio_fd<0)
     fprintf(stderr, "Could not open /dev/dsp\n");
   
@@ -772,11 +803,15 @@ I_InitSound()
   i = 11 | (2<<16);                                           
   myioctl(audio_fd, SNDCTL_DSP_SETFRAGMENT, &i);
   myioctl(audio_fd, SNDCTL_DSP_RESET, 0);
+  myioctl(audio_fd, SNDCTL_DSP_SYNC, NULL);
   
   i=SAMPLERATE;
   
   myioctl(audio_fd, SNDCTL_DSP_SPEED, &i);
   
+  i = SAMPLESIZE*8;
+  myioctl(audio_fd, SNDCTL_DSP_SAMPLESIZE, &i);
+        
   i=1;
   myioctl(audio_fd, SNDCTL_DSP_STEREO, &i);
   
@@ -799,12 +834,12 @@ I_InitSound()
     if (!S_sfx[i].link)
     {
       // Load data from WAD file.
-      S_sfx[i].data = getsfx( S_sfx[i].name, &lengths[i] );
+      S_sfx[i].driver_data = getsfx( S_sfx[i].name, &lengths[i] );
     }	
     else
     {
       // Previously loaded already?
-      S_sfx[i].data = S_sfx[i].link->data;
+      S_sfx[i].driver_data = S_sfx[i].link->driver_data;
       lengths[i] = lengths[(S_sfx[i].link - S_sfx)/sizeof(sfxinfo_t)];
     }
   }
@@ -815,6 +850,8 @@ I_InitSound()
   for ( i = 0; i< MIXBUFFERSIZE; i++ )
     mixbuffer[i] = 0;
   
+  
+  I_SetChannels();
   // Finished initialization.
   fprintf(stderr, "I_InitSound: sound module ready\n");
     
@@ -835,46 +872,44 @@ void I_ShutdownMusic(void)	{ }
 static int	looping=0;
 static int	musicdies=-1;
 
-void I_PlaySong(int handle, int looping)
+void I_PlaySong(void *handle, boolean looping)
 {
   // UNUSED.
-  handle = looping = 0;
+  handle = 0;
+  looping = false;
   musicdies = gametic + TICRATE*30;
 }
 
-void I_PauseSong (int handle)
+void I_PauseSong (void)
 {
   // UNUSED.
-  handle = 0;
+ 
 }
 
-void I_ResumeSong (int handle)
+void I_ResumeSong (void)
 {
   // UNUSED.
-  handle = 0;
+
 }
 
-void I_StopSong(int handle)
+void I_StopSong(void)
 {
   // UNUSED.
-  handle = 0;
   
-  looping = 0;
-  musicdies = 0;
 }
 
-void I_UnRegisterSong(int handle)
+void I_UnRegisterSong(void *handle)
 {
   // UNUSED.
-  handle = 0;
+  handle = NULL;
 }
 
-int I_RegisterSong(void* data)
+void *I_RegisterSong(void *data, int len)
 {
   // UNUSED.
   data = NULL;
-  
-  return 1;
+  len = 0;
+  return NULL;
 }
 
 // Is the song playing?
@@ -885,8 +920,13 @@ int I_QrySongPlaying(int handle)
   return looping || musicdies > gametic;
 }
 
-
-
+boolean I_MusicIsPlaying(void)
+{
+        return false;
+}
+void I_BindSoundVariables(void) {
+    
+}
 //
 // Experimental stuff.
 // A Linux timer interrupt, for asynchronous
@@ -914,10 +954,12 @@ void I_HandleSoundTimer( int ignore )
   //fprintf( stderr, "%c", '+' ); fflush( stderr );
   
   // Feed sound device if necesary.
+    printf("handle...");
   if ( flag )
   {
     // See I_SubmitSound().
     // Write it to DSP device.
+      printf("dsp wirte\n");
     write(audio_fd, mixbuffer, SAMPLECOUNT*BUFMUL);
 
     // Reset flag counter.
